@@ -1,0 +1,4 @@
+# One SSH-accessible worker per line. Comments (#) and blank lines ignored.
+
+austin@rainbowroad.local
+austin@redalert.local
