@@ -1,130 +1,100 @@
 #!/usr/bin/env bash
-# watch_transcode.sh — Watch for new video files and farm transcoding across
-# remote workers over SSH. Each worker runs one job at a time since the
-# Ruby CLI saturates all available cores.
-
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INPUT_DIR="${1:-~/videos}"
-OUTPUT_DIR="${2:-~/output}"
-WORKERS_FILE="${3:-${SCRIPT_DIR}/workers.txt}"
-REMOTE_TMP="/dev/shm/dist_transcode" # tmpfs-backed for faster I/O
-LOCK_DIR="/tmp/.dist_transcode_locks"
+SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKERS_FILE=""
+REMOTE="/dev/shm/dist_transcode"
+LD='/tmp/.dtx_lock'  # lock dir
 
-# ─── Prereqs check ─────────────────────────────────────
-missing=()
-[[ ! -f "$WORKERS_FILE" ]] && missing+=("$WORKERS_FILE")
-command -v ssh         &>/dev/null || missing+=("ssh")
-command -v scp         &>/dev/null || missing+=("scp")
-command -v inotifywait &>/dev/null || missing+=("inotifywait (apt install inotify-tools)")
+# ── parse args ─────────────────────────────
+while [[ ${1-} == --* ]]; do
+    case $1 in --status) STATUS=1; shift;; *) shift;; esac
+done || break
+[[ -n ${1-} ]] && INPUT="$(realpath "$1")" || INPUT="~/videos"
+[[ -n ${2-} ]] && OUTPUT="$(realpath -m "${2}")"  || OUTPUT="~/output"
+if [[ -n ${3-} ]]; then WORKERS_FILE="$3"; else WORKERS_FILE="${SCRIPT}/workers.txt"; fi
 
-if (( ${#missing[@]} )); then
-    printf '[!] Missing: %s\n' "${missing[*]}" >&2; exit 1
+# ── check ──────────────────────────────────
+must() { command -v "$1" &>/dev/null || die "need $1"; }
+die()  { echo "[!] $*" >&2; exit 1; }
+[[ -f "$WORKERS_FILE" ]] || die "No workers file: $WORKERS_FILE"
+
+mapfile -t HW < <(grep -vE '^\s*#|^\s*$' "$WORKERS_FILE")
+(( ${#HW[@]} == 0 )) && die "Empty worker list"
+mkdir -p "$OUTPUT" "$LD"
+
+trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
+
+# ── --status ───────────────────────────────
+if [[ $STATUS ]]; then
+    for h in "${HW[@]}"; do s="${h//\//_}";
+        if [[ -f "$LD/$s" ]]; then
+            ssh "$h" 'cat /tmp/.dtx_last.txt 2>/dev/null || echo "BUSY"' 2>/dev/null \
+                || echo "$h: BUSY (no data)"
+        else ssh "$h" true 2>/dev/null && echo "$h: IDLE" || echo "$h: OFFLINE"; fi
+    done; exit 0
 fi
 
-INPUT_DIR="$(realpath "$INPUT_DIR")"
-OUTPUT_DIR="$(realpath -m "$OUTPUT_DIR")"
-mkdir -p "$OUTPUT_DIR" "$LOCK_DIR"
+echo "watch=$INPUT out=$OUTPUT workers=${#HW}"
 
-trap 'kill 0 2>/dev/null || true' EXIT
+# ── one job ────────────────────────────────
+run() {
+    local fp="$1" rp="$2" h s lock
+    local found=false
+    for __ in $(seq 0 $(( ${#HW[@]} - 1 ))); do
+        h="${HW[$IDX]}"
+        s="${h//\//_}"; lock="$LD/$s"
+        IDX=$(( (IDX + 1) % ${#HW[@]} ))
+        if mkdir "$lock" 2>/dev/null; then found=true; break; fi
+    done || true
+    [[ $found == true ]] || return 1  # all busy
 
-echo "[+] Watching : $INPUT_DIR"
-echo "[+] Output   : $OUTPUT_DIR"
-echo "[+] Workers  : $(grep -cve '^\s*#|^\s*$' "$WORKERS_FILE") host(s)"
-echo ""
+    local bn=${fp##*/} sub=$(dirname -- "$rp") prog
+    [[ $sub == '.' ]] && sub=''
+    echo "[$(date +%H:%m)] $bn → $h"
 
-# ─── Worker list ────────────────────────────────────────
-mapfile -t WORKERS < <(grep -vE '^\s*#|^\s*$' "$WORKERS_FILE" | sort -u)
-NUM_WORKERS=${#WORKERS[@]}
-(( NUM_WORKERS == 0 )) && { echo "[E] No workers found"; exit 1; }
+    ssh "$h" "mkdir -p '$REMOTE'" 2>/dev/null || true
+    scp "$fp" "$h:$REMOTE/$bn"     2>/dev/null || { rm -rf "$lock"; return; }
 
-worker_idx=0
+    prog=$(ssh "$h" "cd '$REMOTE' && transcode-video.rb -m av1 \"$bn\" 2>&1 | tee /tmp/.dtx_prog.txt" 2>/dev/null)
+    local rc=${PIPESTATUS[0]}
+    # save last encoding progress for --status polling
+    ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt | tail -1 > /tmp/.dtx_last.txt 2>/dev/null' 2>/dev/null || true
 
-pick_worker() {
-    local w i
-    for ((i = 0; i < NUM_WORKERS; i++)); do
-        w="${WORKERS[$(( (worker_idx + i) % NUM_WORKERS ))]}"
-        ! [[ -f "${LOCK_DIR}/${w//\//_}" ]] && break
-    done
-    worker_idx=$(( (worker_idx + 1) % NUM_WORKERS ))
-    echo "$w"
-}
-
-# ─── Transcode one file on chosen worker ────────────────
-# Args: ABS_PATH REL_PATH
-do_job() {
-    local abs="$1" rel="$2"
-    local host
-    host="$(pick_worker)"
-
-    printf '%s' $$ > "${LOCK_DIR}/${host//\//_}"
-
-    local bname="${abs##*/}"
-    local sub="$(dirname "$rel")"
-    [[ "$sub" == "." ]] && sub=""
-
-    echo "[$(date +%H:%M)] ship $bname → $host"
-
-    # Ship to worker temp (use absolute local path directly)
-    ssh "$host" "mkdir -p '${REMOTE_TMP}'" 2>/dev/null || true
-    if ! scp "$abs" "${host}:${REMOTE_TMP}/${bname}" 2>/dev/null; then
-        echo "[!] SCP failed: $abs → $host"; rm -f "${LOCK_DIR}/${host//\//_}"; return
-    fi
-
-    # Transcode on worker (show stderr to diagnose failures)
-    if ssh "$host" "cd '${REMOTE_TMP}' && transcode-video.rb -m av1 '${bname}'" 2>&1; then
-        local ext="${bname##*.}" stem="${bname%.*}" result="${stem}_av1.${ext}"
-
-        mkdir -p "${OUTPUT_DIR}/${sub}"
-        if scp "${host}:${REMOTE_TMP}/${result}" "${OUTPUT_DIR}/${sub}/" 2>/dev/null; then
-            echo "[ok] $rel ✓ ($host)"
-        else
-            echo "[!] copy-back failed from $host: $result" >&2
-        fi
-
-        # Cleanup worker temp
-        ssh "$host" "rm -f '${REMOTE_TMP}/${bname}' '${REMOTE_TMP}/${result}'" 2>/dev/null || true
+    if (( rc == 0 )); then
+        local ext=${bn##*.} stem=${bn%.*} out="${stem}_av1.${ext}"
+        mkdir -p "$OUTPUT/$sub"
+        scp "$h:$REMOTE/$out" "$OUTPUT/$sub/" 2>/dev/null && echo " ok: $rp ($h)" \
+            || echo " ?? copy $out from $h" >&2
     else
-        echo "[!] transcode ERR on $host: $rel" >&2
-    fi
+        echo " FAIL: $rp on $h $(tail -1 <<<"$prog")" >&2; fi
 
-    rm -f "${LOCK_DIR}/${host//\//_}"
+    ssh "$h" "rm -f '$REMOTE/$bn' '$REMOTE/${stem:-x}_av1.*'" 2>/dev/null || true
+    rm -rf "$lock"
 }
 
-# ─── Main loop ──────────────────────────────────────────
-while true; do
+# ── loop ───────────────────────────────────
+IDX=0
+while :; do
+    raw=$(inotifywait -rq -e close_write,moved_to --exclude '/._.*' "$INPUT" 2>/dev/null || sleep 5)
+    [[ -z $raw ]] && continue
+    fl=/tmp/.dtx_$$_fl
+    >$fl
 
-    new_files=$(inotifywait -re close_write,moved_to --exclude '/._.*' "$INPUT_DIR" 2>/dev/null || sleep 5)
-    [[ -z "$new_files" ]] && continue
+    while IFS= read -r L; do
+        f=${L##* }                        # last field = path
+        case "$f" in *.mkv|*.mp4|*.avi|*.mov|*.webm) ;; *) continue;; esac
+        [[ $f == *'_av1'* ]] && continue
+        a="${INPUT}/${f}"               # abspath
+        d=$(dirname -- "$f"); [[ $d != . ]] || d=''
+        printf '%s\t%s\n' "$a" "${d:+$d/}${f}"
+    done <<<"$raw" | sort -u > "$fl"
 
-    flist=/tmp/.dt_flist.$$
-    : > "$flist"
+    c=$(wc -l < "$fl")
+    (( c == 0 )) && { rm -f $fl; continue; }
+    echo ">> $c file(s)"
 
-    while IFS= read -r line; do
-        fpath="${line##* }"          # inotifywait: DIR EVENT FILE
-        case "${fpath}" in
-            *.mkv|*.mp4|*.avi|*.mov|*.webm|*.m4v) ;;
-            *) continue ;;
-        esac
-        [[ "$fpath" == *_av1* ]] && continue
-
-        # fpath is relative to watch dir; rebuild abs & sub
-        abs="${INPUT_DIR}/${fpath}"
-        sub="$(dirname "$fpath")"
-        [[ "$sub" == "." ]] && sub=""
-        printf '%s\t%s\n' "$abs" "${sub:+$sub/}${fpath}"
-    done <<< "$new_files" | sort -u > "$flist"
-
-    cnt=$(wc -l < "$flist")
-    (( cnt == 0 )) && { rm -f "$flist"; continue; }
-
-    echo "=== $cnt new file(s) detected ==="
-
-    while IFS=$'\t' read -r abspath relpath; do
-        do_job "$abspath" "$relpath" &
-    done < "$flist"
-
+    while IFS=$'\t' read -r A R; do run "$A" "$R" & done < "$fl"
     wait 2>/dev/null || true
-    rm -f "$flist"
+    rm -f "$fl"
 done
