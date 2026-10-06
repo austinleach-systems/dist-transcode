@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INPUT_DIR="${1:-~/videos}"
 OUTPUT_DIR="${2:-~/output}"
 WORKERS_FILE="${3:-${SCRIPT_DIR}/workers.txt}"
-REMOTE_TMP="/tmp/dist_transcode"
+REMOTE_TMP="/dev/shm/dist_transcode" # tmpfs-backed for faster I/O
 LOCK_DIR="/tmp/.dist_transcode_locks"
 
 # ─── Prereqs check ─────────────────────────────────────
