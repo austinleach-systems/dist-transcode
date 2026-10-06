@@ -72,8 +72,8 @@ do_job() {
         echo "[!] SCP failed: $abs → $host"; rm -f "${LOCK_DIR}/${host//\//_}"; return
     fi
 
-    # Transcode on worker
-    if ssh "$host" "cd '${REMOTE_TMP}' && transcode-video.rb -m av1 '${bname}'" </dev/null 2>/dev/null; then
+    # Transcode on worker (show stderr to diagnose failures)
+    if ssh "$host" "cd '${REMOTE_TMP}' && transcode-video.rb -m av1 '${bname}'" 2>&1; then
         local ext="${bname##*.}" stem="${bname%.*}" result="${stem}_av1.${ext}"
 
         mkdir -p "${OUTPUT_DIR}/${sub}"
@@ -113,7 +113,7 @@ while true; do
         abs="${INPUT_DIR}/${fpath}"
         sub="$(dirname "$fpath")"
         [[ "$sub" == "." ]] && sub=""
-        printf '%s\t%s\n' "$abs" "$sub/$fpath"
+        printf '%s\t%s\n' "$abs" "${sub:+$sub/}${fpath}"
     done <<< "$new_files" | sort -u > "$flist"
 
     cnt=$(wc -l < "$flist")
