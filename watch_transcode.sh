@@ -109,9 +109,11 @@ while true; do
         esac
         [[ "$fpath" == *_av1* ]] && continue
 
-        # Strip INPUT_DIR prefix to get subfolder structure — no realpath tricks
-        rel="${fpath#${INPUT_DIR}/}"
-        [[ -n "$rel" ]] && printf '%s\t%s\n' "$fpath" "$rel"
+        # fpath is relative to watch dir; rebuild abs & sub
+        abs="${INPUT_DIR}/${fpath}"
+        sub="$(dirname "$fpath")"
+        [[ "$sub" == "." ]] && sub=""
+        printf '%s\t%s\n' "$abs" "$sub/$fpath"
     done <<< "$new_files" | sort -u > "$flist"
 
     cnt=$(wc -l < "$flist")
