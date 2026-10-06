@@ -30,7 +30,7 @@ mkdir -p "$OUTPUT" "$LD"
 trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
 
 # ── --status ───────────────────────────────
-if [[ $STATUS ]]; then
+if $STATUS; then
     for h in "${HW[@]}"; do s="${h//\//_}";
         if [[ -f "$LD/$s" ]]; then
             ssh "$h" 'cat /tmp/.dtx_last.txt 2>/dev/null || echo "BUSY"' 2>/dev/null \
