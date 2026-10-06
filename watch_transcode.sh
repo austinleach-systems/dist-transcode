@@ -60,18 +60,21 @@ run() {
     ssh "$h" "mkdir -p '$REMOTE'" 2>/dev/null || true
     scp "$fp" "$h:$REMOTE/$bn"     2>/dev/null || { rm -rf "$lock"; return; }
 
-    prog=$(ssh "$h" "cd '$REMOTE' && transcode-video.rb -m av1 \"$bn\" 2>&1 | tee /tmp/.dtx_prog.txt" 2>/dev/null)
-    local rc=${PIPESTATUS[0]}
-    # save last encoding progress for --status polling
-    ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt | tail -1 > /tmp/.dtx_last.txt 2>/dev/null' 2>/dev/null || true
+    # Encode — capture exit code + output; tee progress for --status polling
+    local ecode_log
+    _remote_output=$(ssh "$h" "cd '$REMOTE' && set -o pipefail; transcode-video.rb -m av1 \"$bn\" 2>&1 | tee /tmp/.dtx_prog.txt; echo EXIT=\$?" ) || true
+    local rc
+    rc=${ecode_log##*$'\n'EXIT=}; rc=${rc:-1}
+    # save last encoding line for --status
+    ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt | tail -1 > /tmp/.dtx_last.txt 2>/dev/null || true' 2>/dev/null || true
 
     if (( rc == 0 )); then
-        local ext=${bn##*.} stem=${bn%.*} out="${stem}_av1.${ext}"
+        local ext=${bn##*.} stem=${bn%.*} result="${stem}_av1.${ext}"
         mkdir -p "$OUTPUT/$sub"
-        scp "$h:$REMOTE/$out" "$OUTPUT/$sub/" 2>/dev/null && echo " ok: $rp ($h)" \
-            || echo " ?? copy $out from $h" >&2
+        scp "$h:$REMOTE/$result" "$OUTPUT/$sub/" 2>/dev/null && echo " ok: $rp ($h)" \
+            || echo " ?? copy $result from $h" >&2
     else
-        echo " FAIL: $rp on $h $(tail -1 <<<"$prog")" >&2; fi
+        echo " FAIL: $rp on $h (rc=$rc)" >&2; fi
 
     ssh "$h" "rm -f '$REMOTE/$bn' '$REMOTE/${stem:-x}_av1.*'" 2>/dev/null || true
     rm -rf "$lock"
