@@ -5,11 +5,15 @@ SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKERS_FILE=""
 REMOTE="/dev/shm/dist_transcode"
 LD='/tmp/.dtx_lock'  # lock dir
+STATUS=false         # --status mode
 
 # ── parse args ─────────────────────────────
-while [[ ${1-} == --* ]]; do
-    case $1 in --status) STATUS=1; shift;; *) shift;; esac
-done || break
+while [[ ${1:-} == --* ]]; do
+    case "$1" in
+        --status) STATUS=true; shift;;
+        *) shift;;
+    esac
+done || true  # safety: don't die if $1 is empty
 [[ -n ${1-} ]] && INPUT="$(realpath "$1")" || INPUT="~/videos"
 [[ -n ${2-} ]] && OUTPUT="$(realpath -m "${2}")"  || OUTPUT="~/output"
 if [[ -n ${3-} ]]; then WORKERS_FILE="$3"; else WORKERS_FILE="${SCRIPT}/workers.txt"; fi
