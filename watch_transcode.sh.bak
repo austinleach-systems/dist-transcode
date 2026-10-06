@@ -12,7 +12,7 @@ WORKERS_FILE="${3:-${SCRIPT_DIR}/workers.txt}"
 REMOTE_TMP="/tmp/dist_transcode"
 LOCK_DIR="/tmp/.dist_transcode_locks"
 
-# ─── Prereqs check ─────────────────────────────────────
+# ─── Prereqs check ──────────────────────────────────────
 missing=()
 [[ ! -f "$WORKERS_FILE" ]] && missing+=("$WORKERS_FILE")
 command -v ssh         &>/dev/null || missing+=("ssh")
@@ -23,7 +23,7 @@ if (( ${#missing[@]} )); then
     printf '[!] Missing: %s\n' "${missing[*]}" >&2; exit 1
 fi
 
-INPUT_DIR="$(realpath "$INPUT_DIR")"
+INPUT_DIR="$(realpath -m "$INPUT_DIR")"
 OUTPUT_DIR="$(realpath -m "$OUTPUT_DIR")"
 mkdir -p "$OUTPUT_DIR" "$LOCK_DIR"
 
@@ -51,33 +51,40 @@ pick_worker() {
     echo "$w"
 }
 
+is_free() {
+    local host="$1" lock="${LOCK_DIR}/${host//\//_}"
+    [[ ! -f "$lock" ]] || kill -0 "$(cat "$lock")" 2>/dev/null
+}
+
 # ─── Transcode one file on chosen worker ────────────────
-# Args: ABS_PATH REL_PATH
 do_job() {
-    local abs="$1" rel="$2"
+    local rel="$1"
     local host
     host="$(pick_worker)"
 
     printf '%s' $$ > "${LOCK_DIR}/${host//\//_}"
 
-    local bname="${abs##*/}"
-    local sub="$(dirname "$rel")"
-    [[ "$sub" == "." ]] && sub=""
+    local bname="${rel##*/}"
+    local subdir
+    subdir="$(dirname "$rel")"
+    [[ "$subdir" == "." ]] && subdir=""
 
     echo "[$(date +%H:%M)] ship $bname → $host"
 
-    # Ship to worker temp (use absolute local path directly)
+    # Ship
     ssh "$host" "mkdir -p '${REMOTE_TMP}'" 2>/dev/null || true
-    if ! scp "$abs" "${host}:${REMOTE_TMP}/${bname}" 2>/dev/null; then
-        echo "[!] SCP failed: $abs → $host"; rm -f "${LOCK_DIR}/${host//\//_}"; return
+    if ! scp "${INPUT_DIR}/${rel}" "${host}:${REMOTE_TMP}/${bname}" 2>/dev/null; then
+        echo "[!] SCP failed: $rel → $host"; rm -f "${LOCK_DIR}/${host//\//_}"; return
     fi
 
     # Transcode on worker
     if ssh "$host" "cd '${REMOTE_TMP}' && transcode-video.rb -m av1 '${bname}'" </dev/null 2>/dev/null; then
-        local ext="${bname##*.}" stem="${bname%.*}" result="${stem}_av1.${ext}"
+        local ext="${bname##*.}"
+        local stem="${bname%.*}"
+        local result="${stem}_av1.${ext}"
 
-        mkdir -p "${OUTPUT_DIR}/${sub}"
-        if scp "${host}:${REMOTE_TMP}/${result}" "${OUTPUT_DIR}/${sub}/" 2>/dev/null; then
+        mkdir -p "${OUTPUT_DIR}/${subdir}"
+        if scp "${host}:${REMOTE_TMP}/${result}" "${OUTPUT_DIR}/${subdir}/" 2>/dev/null; then
             echo "[ok] $rel ✓ ($host)"
         else
             echo "[!] copy-back failed from $host: $result" >&2
@@ -102,16 +109,15 @@ while true; do
     : > "$flist"
 
     while IFS= read -r line; do
-        fpath="${line##* }"          # inotifywait: DIR EVENT FILE
+        fpath="${line##* }"          # inotifywait output: DIR EVENT FILE
         case "${fpath}" in
             *.mkv|*.mp4|*.avi|*.mov|*.webm|*.m4v) ;;
             *) continue ;;
         esac
         [[ "$fpath" == *_av1* ]] && continue
 
-        # Strip INPUT_DIR prefix to get subfolder structure — no realpath tricks
-        rel="${fpath#${INPUT_DIR}/}"
-        [[ -n "$rel" ]] && printf '%s\t%s\n' "$fpath" "$rel"
+        rel="$(realpath --relative-to="$INPUT_DIR" "$fpath" 2>/dev/null || true)"
+        [[ -n "$rel" ]] && echo "$rel"
     done <<< "$new_files" | sort -u > "$flist"
 
     cnt=$(wc -l < "$flist")
@@ -119,8 +125,8 @@ while true; do
 
     echo "=== $cnt new file(s) detected ==="
 
-    while IFS=$'\t' read -r abspath relpath; do
-        do_job "$abspath" "$relpath" &
+    while IFS= read -r p; do
+        do_job "$p" &
     done < "$flist"
 
     wait 2>/dev/null || true
