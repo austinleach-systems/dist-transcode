@@ -32,8 +32,9 @@ trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
 if $STATUS; then
     for h in "${HW[@]}"; do s="${h//\//_}";
         if [[ -d "$LD/$s" ]]; then
-            ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt 2>/dev/null | tail -1 || echo "BUSY"' \
-                2>/dev/null || echo "$h: BUSY (no data)"
+            prog=$(ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt 2>/dev/null | tail -1' 2>/dev/null) || prog=""
+            [[ -z $prog ]] && prog="BUSY (no progress data)"
+            echo "$h: $prog"
         else ssh "$h" true 2>/dev/null && echo "$h: IDLE" || echo "$h: OFFLINE"; fi
     done; exit 0
 fi
@@ -55,16 +56,16 @@ run() {
 
     local bn=${fp##*/} sub=$(dirname -- "$rp")
     [[ $sub == '.' ]] && sub=''
-    echo "[$(date +%H:%m)] $bn → $h"
+    echo "[$(date +%H:%M)] $bn → $h"
 
     ssh "$h" "mkdir -p '$REMOTE'" 2>/dev/null || true
     scp "$fp" "$h:$REMOTE/$bn"     2>/dev/null || { rm -rf "$lock"; return; }
 
-    # Encode — output streams live (not captured); pipefail gives us transcode's rc
+    # Encode — live output prefixed with hostname; _encode_rc tracks remote exit
     local _encode_rc=1
-    ssh "$h" "cd '$REMOTE' && set -o pipefail && \
-        transcode-video.rb -m av1 \"\$bn\" 2>&1 | tee /tmp/.dtx_prog.txt" \
-        && _encode_rc=0 || true
+    { ssh "$h" "cd '$REMOTE' && set -o pipefail; \
+        transcode-video.rb -m av1 \"\$bn\" 2>&1 | tee /tmp/.dtx_prog.txt"; } \
+        | sed "s/^/[$h] /" && _encode_rc=0 || true
     local rc=$_encode_rc
 
     if (( rc == 0 )); then
@@ -104,3 +105,4 @@ while :; do
     wait 2>/dev/null || true
     rm -f "$fl"
 done
+
