@@ -13,7 +13,7 @@ while [[ ${1:-} == --* ]]; do
         --status) STATUS=true; shift;;
         *) shift;;
     esac
-done || true  # safety: don't die if $1 is empty
+done || true
 [[ -n ${1-} ]] && INPUT="$(realpath "$1")" || INPUT="~/videos"
 [[ -n ${2-} ]] && OUTPUT="$(realpath -m "${2}")"  || OUTPUT="~/output"
 if [[ -n ${3-} ]]; then WORKERS_FILE="$3"; else WORKERS_FILE="${SCRIPT}/workers.txt"; fi
@@ -23,7 +23,7 @@ must() { command -v "$1" &>/dev/null || die "need $1"; }
 die()  { echo "[!] $*" >&2; exit 1; }
 [[ -f "$WORKERS_FILE" ]] || die "No workers file: $WORKERS_FILE"
 
-mapfile -t HW < <(grep -vE '^\s*#|^\s*$' "$WORKERS_FILE")
+mapfile -t HW < <(sed 's/\r$//' "$WORKERS_FILE" | grep -vE '^\s*#|^\s*$')
 (( ${#HW[@]} == 0 )) && die "Empty worker list"
 mkdir -p "$OUTPUT" "$LD"
 
@@ -33,8 +33,8 @@ trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
 if $STATUS; then
     for h in "${HW[@]}"; do s="${h//\//_}";
         if [[ -f "$LD/$s" ]]; then
-            ssh "$h" 'cat /tmp/.dtx_last.txt 2>/dev/null || echo "BUSY"' 2>/dev/null \
-                || echo "$h: BUSY (no data)"
+            ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt 2>/dev/null | tail -1 || echo "BUSY"' \
+                2>/dev/null || echo "$h: BUSY (no data)"
         else ssh "$h" true 2>/dev/null && echo "$h: IDLE" || echo "$h: OFFLINE"; fi
     done; exit 0
 fi
@@ -53,20 +53,19 @@ run() {
     done || true
     [[ $found == true ]] || return 1  # all busy
 
-    local bn=${fp##*/} sub=$(dirname -- "$rp") prog
+    local bn=${fp##*/} sub=$(dirname -- "$rp")
     [[ $sub == '.' ]] && sub=''
     echo "[$(date +%H:%m)] $bn → $h"
 
     ssh "$h" "mkdir -p '$REMOTE'" 2>/dev/null || true
     scp "$fp" "$h:$REMOTE/$bn"     2>/dev/null || { rm -rf "$lock"; return; }
 
-    # Encode — capture exit code + output; tee progress for --status polling
-    local ecode_log
-    _remote_output=$(ssh "$h" "cd '$REMOTE' && set -o pipefail; transcode-video.rb -m av1 \"$bn\" 2>&1 | tee /tmp/.dtx_prog.txt; echo EXIT=\$?" ) || true
-    local rc
-    rc=${ecode_log##*$'\n'EXIT=}; rc=${rc:-1}
-    # save last encoding line for --status
-    ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt | tail -1 > /tmp/.dtx_last.txt 2>/dev/null || true' 2>/dev/null || true
+    # Encode — output streams live (not captured); pipefail gives us transcode's rc
+    local _encode_rc=1
+    ssh "$h" "cd '$REMOTE' && set -o pipefail && \
+        transcode-video.rb -m av1 \"\$bn\" 2>&1 | tee /tmp/.dtx_prog.txt" \
+        && _encode_rc=0 || true
+    local rc=$_encode_rc
 
     if (( rc == 0 )); then
         local ext=${bn##*.} stem=${bn%.*} result="${stem}_av1.${ext}"
