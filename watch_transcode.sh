@@ -32,7 +32,7 @@ trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
 # ── --status ───────────────────────────────
 if $STATUS; then
     for h in "${HW[@]}"; do s="${h//\//_}";
-        if [[ -f "$LD/$s" ]]; then
+        if [[ -d "$LD/$s" ]]; then
             ssh "$h" 'grep "Encoding:" /tmp/.dtx_prog.txt 2>/dev/null | tail -1 || echo "BUSY"' \
                 2>/dev/null || echo "$h: BUSY (no data)"
         else ssh "$h" true 2>/dev/null && echo "$h: IDLE" || echo "$h: OFFLINE"; fi
