@@ -39,7 +39,8 @@ if $STATUS; then
     done; exit 0
 fi
 
-echo "watch=$INPUT out=$OUTPUT workers=${#HW}"
+VERSION_COMMIT="$(cd "$SCRIPT" && git log --oneline -1 --format=%h 2>/dev/null || echo unknown)"
+echo "ver=$VERSION_COMMIT watch=$INPUT out=$OUTPUT workers=${#HW}"
 
 # ── one job ────────────────────────────────
 run() {
