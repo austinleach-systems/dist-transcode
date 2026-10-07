@@ -22,8 +22,9 @@ if [[ -n ${3-} ]]; then WORKERS_FILE="$3"; else WORKERS_FILE="${SCRIPT}/workers.
 must() { command -v "$1" &>/dev/null || die "need $1"; }
 die()  { echo "[!] $*" >&2; exit 1; }
 [[ -f "$WORKERS_FILE" ]] || die "No workers file: $WORKERS_FILE"
-
+echo "dbg: loading $WORKERS_FILE ($(wc -l < "$WORKERS_FILE") lines)" >&2
 mapfile -t HW < <(sed 's/\r$//' "$WORKERS_FILE" | grep -vE '^\s*#|^\s*$')
+echo "dbg: ${#HW} workers after filter:" >&2; printf '  %q\n' "${HW[@]}" >&2
 (( ${#HW[@]} == 0 )) && die "Empty worker list"
 mkdir -p "$OUTPUT" "$LD"
 
