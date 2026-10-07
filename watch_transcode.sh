@@ -63,9 +63,9 @@ run() {
 
     # Encode — live output prefixed with hostname; _encode_rc tracks remote exit
     local _encode_rc=1
-    { ssh "$h" "cd '$REMOTE' && set -o pipefail; \
+    { ssh -t "$h" "cd '$REMOTE' && set -o pipefail; \
         transcode-video.rb -m av1 \"\$bn\" 2>&1 | tee /tmp/.dtx_prog.txt"; } \
-        | sed "s/^/[$h] /" && _encode_rc=0 || true
+        | sed "s/^/[$(echo "$h" | cut -d@ -f2)] /" && _encode_rc=0 || true
     local rc=$_encode_rc
 
     if (( rc == 0 )); then
