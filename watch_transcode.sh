@@ -62,12 +62,10 @@ run() {
     ssh "$h" "mkdir -p '$REMOTE'" 2>/dev/null || true
     scp "$fp" "$h:$REMOTE/$bn"     2>/dev/null || { rm -rf "$lock"; return; }
 
-    # Encode — stream live over SSH with hostname prefix baked into remote command
-    # No local pipe = no buffering problem when run as background job
+    # Encode — stream live over SSH (no local pipe = no buffering in background subshell)
     local _encode_rc=1
     ssh "$h" "cd '$REMOTE' && set -o pipefail; \
-        LABEL=$(whoami)@$(hostname -I | awk '{print \$1}'); \
-        transcode-video.rb -m av1 \"\$bn\" 2>&1 | sed \"s/^/[$LABEL] /\" | tee /tmp/.dtx_prog.txt" \
+        transcode-video.rb -m av1 \"\$bn\" 2>&1 | tee /tmp/.dtx_prog.txt" \
         && _encode_rc=0 || true
     local rc=$_encode_rc
 
