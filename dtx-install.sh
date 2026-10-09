@@ -1,15 +1,49 @@
 #!/usr/bin/env bash
 #
 # dtx-install.sh — one-shot worker bootstrap for Debian/Ubuntu hosts
-# Usage:  sudo bash dtx-install.sh
+# Usage:  sudo bash dtx-install.sh              # local install (clone + deps + systemd)
+#         ./dtx-install.sh <remote_host>        # update remote worker git repo + restart svc
+#         ./dtx-install.sh 10.0.79.8 10.0.79.20 # deploy to multiple hosts from thefarm
 #
 set -euo pipefail
 
 REPO_DIR="${DXT_REPO_DIR:-/opt/dist-transcode}"
 REPO_URL="${DXT_REPO_URL:-https://github.com/austinleach-systems/dist-transcode.git}"
-SERVICE=dtx-worker.service
+REMOTE_USER="${DXT_REMOTE_USER:-austin}"
 
-echo "=== Dist Transcode Worker Setup ==="
+deploy_remote() {
+    local host="$1"
+    echo ""
+    echo "=== Updating worker on $host ==="
+    
+    # Git pull + systemctl restart on the target
+    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$host" \
+        "sudo git -C '$REPO_DIR' pull && sudo systemctl restart dtx-worker.service" || {
+            echo "ERROR: update of $host failed."
+            return 1
+        }
+    
+    # Verify service is running
+    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$host" \
+        "sudo systemctl is-active dtx-worker.service" || true
+}
+
+if (( $# > 0 )); then
+    failed=0
+    for target in "$@"; do
+        deploy_remote "$target" || (( failed++ ))
+    done
+    if (( failed > 0 )); then
+        echo ""
+        echo "=== Updated $(($# - failed))/$# host(s), $failed failed ==="
+        exit 1
+    fi
+    echo ""
+    echo "=== All $# host(s) updated successfully ==="
+    exit 0
+fi
+
+echo "=== Dist Transcode Worker Setup (local) ==="
 
 # ── Clone/ensure repo exists ────────────────────────────────────────────
 if [ ! -d "$REPO_DIR/.git" ]; then
