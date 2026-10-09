@@ -66,7 +66,7 @@ echo "ver=$VER watch=$INPUT out=$OUTPUT workers=${#HW[@]}"
 
 # ── one job (TCP dispatch) ────────────────
 run() {
-    local fp="$1" rp="$2" h hp found=false tmp_res="/tmp/.dtx_$$_${RANDOM}_resrc"
+    local fp="$1" rp="$2" h hp found=false tmp_res="/tmp/.dtx_$$_${BASHPID}_resrc"
 
     # Pick an idle worker via file-backed atomic round-robin (survives fork)
     local tried=0
@@ -99,19 +99,20 @@ run() {
 
     local result="${stem}_av1.${ext}"
     
-    # Upload via SCP, log status to per-job file
-    ( scp -q "$fp" "$h:$REMOTE/$bn" 2>/dev/null && echo " ok: uploaded $bn → $hostip" ) >> "$logfile" \
-        || { echo "FAIL: scp failed ($bn)" > "$logfile"; return 1; }
+    # Upload via rsync (retry, compress, preserve attrs)
+    rsync -q --progress=no "$fp" "$h:$REMOTE/" 2>/dev/null >&- \
+        && echo " ok: uploaded $bn → $hostip" >> "$logfile" \
+        || { echo "FAIL: upload failed ($bn)" > "$logfile"; return 1; }
 
     local rc=0
-    # Redirect transcode stdout so only the .rc file content ends up in rc
-    $CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" >/dev/null 2>&1
+    # --silent suppresses non-progress output; .rc gets just the number
+    $CL -r "$tmp_res" --host "$hostip" --silent transcode -f "$bn" >/dev/null 2>&1
     rc=$(cat "${tmp_res}.rc" 2>/dev/null || echo 1)
 
     if (( ${rc:-1} == 0 )); then
         mkdir -p "$OUTPUT/$sub"
-        if scp -q "$h:$REMOTE/$result" "$OUTPUT/$sub/" 2>/dev/null; then
-            echo " ok: $bn → $hostip" >> "$logfile"
+        if rsync -q "$h:$REMOTE/$result" "$OUTPUT/$sub/" 2>/dev/null; then
+            echo " ok: $bn → $hostip (downloaded)" >> "$logfile"
         else
             echo " ?? copy failed: $result from $hostip" >> "$logfile"
         fi

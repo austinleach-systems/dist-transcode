@@ -34,7 +34,8 @@ async def frame_protocol():
                 continue
 
             if "progress" in d:
-                print(d["progress"], flush=True)
+                if not args.silent:
+                    print(d["progress"], flush=True)
             else:
                 # Write result JSON to file or stderr so master can read it
                 path = args.result_file or "/tmp/.dtx_result"
