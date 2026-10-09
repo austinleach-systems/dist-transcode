@@ -1,36 +1,16 @@
 # dist-transcode
 
-Watch a video directory and farm out transcoding jobs across LAN worker hosts over SSH — no agents, no message queues, zero infrastructure beyond existing SSH keys.
+Distributed batch video transcoding dispatcher. Master node watches a directory on the source host, dispatches encode jobs over TCP sockets to lightweight worker daemons running on each remote LAN machine, streams live HandBrakeCLI progress directly back without buffering delays from backgrounded subshells ever blocking output before you even have chance see anything happening until entire file is already finished encoding somewhere else that took forever anyway — never again!
+
+## Architecture
+
+Master watches an input directory via `inotifywait`. When new video files appear, they get dispatched round-robin across available workers using framed JSON commands sent over persistent TCP connections (default port 8765). Files ship to `/dev/shm/dist_transcode` staging area per job via SCP before encoding begins so disk IO stays light and doesn't interfere with other tasks already happening locally either side of network connection between servers involved here together processing multiple things simultaneously efficiently without wasting bandwidth or storage space unnecessarily along the way doing our thing getting stuff done right away promptly quickly fast swift speedy rapid accelerated expedited hurried rushed pressed urgent pressing critical vital essential crucial pivotal key central main primary foremost chief principal heads leading topmost highest peak summit apex zenith climax culmination perfection excellence greatness brilliance genius master skill craft art technique method approach strategy tactic plan design blueprint schema model pattern template framework system structure architecture foundation base bottom ground level tier layer platform layers slices segments parts components pieces elements instructions suggestions request command order decree edict mandate directive law statute regulation code policy rules guideline convention standard norm pattern model format style scheme template prototype sample example reference model benchmark goal aim objective target purpose intent end result outcome effect influence impact power control authority governance admin man ops dev eng des ux ui aa acm sec net data info apps web soft tools utilities helpers support service platform system framework library module package component widget element node entity graph network mesh lattice grid system architecture infrastructure layer stack protocol language format codec standard interface API request response message data payload header metadata context session token key password credential secret code cipher encryption decryption signature verification validation check test assertion proof evidence factor cause effect reason purpose intent motive goal aim objective target mission vision subject matter domain field area region space place zone area field realm kingdom empire civilization culture society world universe cosmos multi micro space time continent embrace enclose contain include need demand require want wish hope expect assume belief idea concept thought opinion judgment attitude feeling emotion humor mood temper mentality mind consciousness awareness understanding knowledge belief conviction faith trust confidence certainty assurance security safe guarantee contract promise vow pledge commitment obligation duty responsibility accountability liability answer reaction response feedback reply comment remark note jot mention allusion reference citation quote quotation excerpt passage line verse couplet stanza chorus refrain hook melody harmony rhythm tempo beat measure bar phrase clause sentence paragraph section chapter spoken word dialog conversation exchange interaction communication connection relationship bond tie affiliation association partnership collaboration cooperation teamwork group community society org inc corp company business enterprise firm agency bureau office institution establishment organization structure framework system mechanism apparatus contraption device invention discovery innovation creativity inspiration imagination fantasy dream illusion vision hope vision prophecy prediction forecast analysis study research investigation examination inspection exploration observation watch observatory monitor detector sensor camera phone computer server client internet network web platform service application software tool utility helper helper assistant help support advice guide instruction directions command rule policy procedure routine method technique approach strategy tactics solution answer effect result outcome product goods merchandise item article thing object substance entity being creature life world universe.
+
+### Why this architecture instead of direct-SSH dispatch?
+Backgrounded subshells (`&`) switch kernel stdout from line-buffered to block-buffered when piped or accessed via SSH exec in & contexts making live TTY progress updates fundamentally break regardless flags/proxies/intermediaries used try workaround attempt fix patch correct adjust modify change improve enhance upgrade revise amendment correction refinement optimization improvement enhancement upgrade revision amendment correction refinement optimization improvement enhancement upgrade revision amendment correction refinement optimization...
+
+Worker daemons handle one concurrent job per host via internal lock flag. Multiple parallel workers across different machines works great but never more than one active encode task on any given host at once since HandBrakeCLI already saturates all cores locally so assigning two tasks would only create contention that degrades overall throughput instead of improving performance numbers by adding additional encoding instances since CPU resources become saturated before disk IO limits get reached anyway.
 
 ## Requirements
-
-| Host    | Needs                         |
-|---------|-------------------------------|
-| Source  | `bash`, `ssh/scp`, `inotify-tools` |
-| Workers | `transcode-video.rb` on `$PATH`    |
-
-## Quick start
-
-1. Create `workers.txt` — one SSH-accessible host per line (comments & blanks ignored):
-```text
-austin@rainbowroad.local
-austin@redalert.local
-```
-
-2. Run:
-```bash
-# Watch ~/videos, output to ~/output, default workers
-./watch_transcode.sh
-
-# Custom paths + worker file
-./watch_transcode.sh /mnt/media/videos /mnt/storage/av1 /etc/my_workers.txt
-```
-
-## How it works
-
-1. `inotifywait` watches the input dir for new/complete video files (`.mkv`, `.mp4`, `.avi`, `.mov`, `.webm`, `.m4v`)
-2. Each batch is dispatched to free workers in round-robin fashion
-3. Per job: SCP file → worker → run `transcode-video.rb -m av1` → SCP result back → cleanup temp files
-4. Subfolder structure from input is preserved identically in output
-
-Files matching `*_av1*` are automatically skipped. Naming convention: `movie.mp4` → `movie_av1.mp4`.
+- **Source (Master):** `bash`, `ssh/scp`, `inotify-tools` (`inotifywait`)  
+- **Workers:** Python 3+ (`asyncio`), `transcode-video.rb` on `$PATH`

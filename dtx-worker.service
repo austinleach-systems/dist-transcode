@@ -1,0 +1,21 @@
+[Unit]
+Description=Distributed Transcode Worker Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/dist-transcode/worker.py
+Restart=on-failure
+RestartSec=5
+Environment=W_PORT=9876
+Environment=W_REMOTE=/dev/shm/dist_transcode
+
+# Security hardening (optional - tighten as needed)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/tmp
+PrivateTmp=no # We use /tmp paths for lock/prog files
+
+[Install]
+WantedBy=multi-user.target
