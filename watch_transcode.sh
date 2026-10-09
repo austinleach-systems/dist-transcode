@@ -104,9 +104,9 @@ run() {
         || { echo "FAIL: scp failed ($bn)" > "$logfile"; return 1; }
 
     local rc=0
-    rc=$($CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" 2>/dev/null; cat "${tmp_res}.rc")
-    true > "$tmp_res.rc.bak"  # clear for next read
-    echo "rc=${rc:-1}" >> "$logfile"
+    # Redirect transcode stdout so only the .rc file content ends up in rc
+    $CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" >/dev/null 2>&1
+    rc=$(cat "${tmp_res}.rc" 2>/dev/null || echo 1)
 
     if (( ${rc:-1} == 0 )); then
         mkdir -p "$OUTPUT/$sub"
@@ -166,6 +166,10 @@ if $BOOTSTRAP; then
             (( jobs_count >= ${#HW[@]} )) && { wait -n 2>/dev/null || true; }
         done < "$boot_fl"
         wait 2>/dev/null || true
+        # Harvest and print per-job results, then clean logs
+        for lf in /tmp/.dtx_joblog_*; do
+            [[ -f "$lf" ]] && cat "$lf" && rm -f "$lf"
+        done
     else
         echo "[*] No unencoded files found for bootstrap"
     fi
@@ -197,5 +201,9 @@ while :; do
 
     while IFS=$'\t' read -r a r; do run "$a" "$r" & done < "$fl"
     wait 2>/dev/null || true
+    # Harvest and print per-job results, then clean logs
+    for lf in /tmp/.dtx_joblog_*; do
+        [[ -f "$lf" ]] && cat "$lf" && rm -f "$lf"
+    done
     rm -f "$fl"
 done
