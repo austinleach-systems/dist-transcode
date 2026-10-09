@@ -99,9 +99,9 @@ run() {
 
     local result="${stem}_av1.${ext}"
     
-    # Upload, dispatch, wait for completion, collect output — all in one go
-    scp -q "$fp" "$h:$REMOTE/$bn" { echo "scp ok"; } >> "$logfile" 2>/dev/null \
-        || { echo "FAIL: scp failed" > "$logfile"; return 1; }
+    # Upload via SCP, log status to per-job file
+    ( scp -q "$fp" "$h:$REMOTE/$bn" 2>/dev/null && echo " ok: uploaded $bn → $hostip" ) >> "$logfile" \
+        || { echo "FAIL: scp failed ($bn)" > "$logfile"; return 1; }
 
     local rc=0
     rc=$($CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" 2>/dev/null; cat "${tmp_res}.rc")
