@@ -26,8 +26,24 @@ mapfile -t HW < <(sed 's/\r$//' "$WORKERS_FILE" | grep -vE '^\s*#|^\s*$')
 (( ${#HW[@]} == 0 )) && die "Empty worker list after filtering."
 mkdir -p "$OUTPUT" "$LD"
 
-trap 'kill $(jobs -p) 2>/dev/null || true' EXIT SIGINT
 CL="python3 ${SCRIPT}/worker_cli.py"
+NWORK=${#HW[@]}
+
+# ── atomic round-robin (shared file + flock so background jobs coordinate) ────
+rr_file="/tmp/.dtx_rr_${$}"
+echo 0 > "$rr_file"
+rr_pick() {
+    (
+        flock -x 9
+        local val=$(cat "$rr_file")
+        local idx=$(( (val + 1) % NWORK ))
+        echo "$idx" > "$rr_file"
+        echo "${HW[$idx]}"
+    ) 9>"${rr_file}.lock"
+}
+
+# ── signal handler: kill children AND exit the loop ────
+trap 'rm -f "$rr_file" "${rr_file}.lock"; kill 0; exit' INT TERM QUIT
 
 # ── --status (via TCP) ────────────────────────
 if $STATUS; then
@@ -52,20 +68,21 @@ echo "ver=$VER watch=$INPUT out=$OUTPUT workers=${#HW[@]}"
 run() {
     local fp="$1" rp="$2" h hp found=false tmp_res="/tmp/.dtx_$$_${RANDOM}_resrc"
 
-    # Pick an idle worker (round-robin start, scan all)
-    for __ in $(seq 0 $(( ${#HW[@]} - 1 ))); do
-        h="${HW[$IDX]}"
-        IDX=$(( (IDX + 1) % ${#HW[@]} ))
+    # Pick an idle worker via file-backed atomic round-robin (survives fork)
+    local tried=0
+    while (( tried < NWORK )); do
+        h=$(rr_pick) || return 1
         hp=$(echo "$h" | cut -d@ -f2)
         hostip=$(echo "$hp" | cut -d: -f1)
 
-        resp=$($CL --host "$hostip" --silent ping 2>/dev/null) || continue
+        resp=$($CL --host "$hostip" --silent ping 2>/dev/null) || { tried=$((tried+1)); continue; }
         local busy="false"
         echo "$resp" | grep -q 'true' && busy="true" || busy="false"
-        [[ "$busy" == "false" ]] && found=true && break
+        [[ "$busy" == "false" ]] && break
+        tried=$((tried+1))
     done
 
-    [[ $found == true ]] || return 1
+    (( tried >= NWORK )) && return 1
 
     local bn="${fp##*/}" sub stem ext
     sub=$(dirname -- "$rp")
@@ -136,8 +153,7 @@ if $BOOTSTRAP; then
     rm -f "$boot_fl"
 fi
 
-# ── watch loop (monitored, batched) ───────
-IDX=0
+# ── watch loop (monitored, batched) ────────
 while :; do
     # -m keeps inotifywait running and captures all events until timeout
     raw=$(timeout 15 inotifywait -mrq -e close_write,moved_to --exclude '/._.*' \

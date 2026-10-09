@@ -64,6 +64,7 @@ class Worker:
 async def run_encode(writer, filename):
     """Run transcode-video.rb and stream progress lines to master."""
     os.makedirs(REMOTE_TMPDIR, exist_ok=True)
+    stem = os.path.splitext(filename)[0]
     cmd = ["transcode-video.rb", "-m", "av1", filename]
 
     try:
@@ -89,7 +90,14 @@ async def run_encode(writer, filename):
         with open(LOG_PATH, "w") as f:
             f.write("\n".join(lines))
 
-        return (rc == 0), rc
+        # Check if output actually exists even if rb exited non-zero
+        import glob
+        outputs = glob.glob(f"{REMOTE_TMPDIR}/{stem}.*")
+        has_output = bool(outputs) and any(
+            os.path.getsize(o) > 0 for o in outputs
+        )
+        ok = (rc == 0) or has_output
+        return ok, rc
 
     except FileNotFoundError:
         with open(LOG_PATH, "w") as f:
