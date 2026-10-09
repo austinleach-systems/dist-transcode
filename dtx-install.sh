@@ -11,35 +11,72 @@ REPO_DIR="${DXT_REPO_DIR:-/opt/dist-transcode}"
 REPO_URL="${DXT_REPO_URL:-https://github.com/austinleach-systems/dist-transcode.git}"
 REMOTE_USER="${DXT_REMOTE_USER:-austin}"
 
+# Parse user@host entries from workers.txt (skip comments / blanks)
+parse_workers() {
+    local file="$1"
+    grep -v '^#' "$file" | grep -v '^\s*$' | while IFS= read -r entry; do
+        echo "$entry" | grep -oP '^[^@]+@\K.+' || true  # extract host from user@host
+    done | sort -u
+}
+
 deploy_remote() {
-    local host="$1"
-    echo ""
-    echo "=== Updating worker on $host ==="
+    local target="$1"
+    # Handle both bare IPs and user@host format
+    local hostname="${target#*@}"
+    local full_target="${target%%:*}"   # strip port if present
     
-    # Git pull + systemctl restart on the target
-    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$host" \
+    echo ""
+    echo "=== Updating worker on $hostname ==="
+    
+    # Use -t to allocate pty (lets sudo prompt interactively over SSH)
+    ssh -t -o StrictHostKeyChecking=no "$REMOTE_USER@$hostname" \
         "sudo git -C '$REPO_DIR' pull && sudo systemctl restart dtx-worker.service" || {
-            echo "ERROR: update of $host failed."
+            echo "ERROR: update of $hostname failed."
             return 1
         }
     
     # Verify service is running
-    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$host" \
+    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$hostname" \
         "sudo systemctl is-active dtx-worker.service" || true
 }
 
 if (( $# > 0 )); then
+    workers=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--all" ]]; then
+            # Read from workers.txt in this directory
+            local_wt="$(cd "$(dirname "${BASH_SOURCE[0]}")" && echo "workers.txt")"
+            if [[ ! -f "$local_wt" ]]; then
+                echo "ERROR: workers.txt not found in $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                exit 1
+            fi
+            while IFS= read -r w; do
+                [[ -n "$w" ]] && workers+=("$w")
+            done < <(parse_workers "$local_wt")
+            echo "[+] Found ${#workers[@]} active worker(s) in workers.txt"
+        else
+            workers+=("$arg")
+        fi
+    done
+    
+    if (( ${#workers[@]} == 0 )); then
+        echo "ERROR: no targets specified. Use host IPs or --all to read from workers.txt."
+        exit 1
+    fi
+    
     failed=0
-    for target in "$@"; do
+    for target in "${workers[@]}"; do
         deploy_remote "$target" || (( failed++ ))
     done
+    
+    total=${#workers[@]}
     if (( failed > 0 )); then
         echo ""
-        echo "=== Updated $(($# - failed))/$# host(s), $failed failed ==="
+        echo "=== Updated $((total - failed))/$total host(s), $failed failed ==="
         exit 1
     fi
     echo ""
-    echo "=== All $# host(s) updated successfully ==="
+    echo "=== All $total host(s) updated successfully ==="
     exit 0
 fi
 
