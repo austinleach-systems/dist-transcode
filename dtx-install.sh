@@ -30,7 +30,13 @@ deploy_remote() {
     
     # Use -t to allocate pty (lets sudo prompt interactively over SSH)
     ssh -t -o StrictHostKeyChecking=no "$REMOTE_USER@$hostname" \
-        "sudo git -C '$REPO_DIR' pull && sudo systemctl restart dtx-worker.service" || {
+        "set -euo pipefail; \
+         REPO_DIR='$REPO_DIR'; REPO_URL='$REPO_URL'; \
+         if [ ! -d \"\$REPO_DIR/.git\" ]; then \
+           echo '[*] Cloning repo...'; sudo git clone '\$REPO_URL' '\$REPO_DIR'; \
+         fi; \
+         echo '[*] Pulling latest...'; sudo git -C '\$REPO_DIR' pull; \
+         echo '[*] Restarting service...'; sudo systemctl restart dtx-worker.service" || {
             echo "ERROR: update of $hostname failed."
             return 1
         }
