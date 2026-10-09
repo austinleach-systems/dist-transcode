@@ -80,6 +80,12 @@ if (( $# > 0 )); then
     exit 0
 fi
 
+# ── Local install: require root or auto-escalate ─────────────────────
+if [[ "$(id -u)" -ne 0 && "${DXT_ESCALATED:-}" != "1" ]]; then
+    export DXT_ESCALATED=1
+    exec sudo "$0"
+fi
+
 echo "=== Dist Transcode Worker Setup (local) ==="
 
 # ── Clone/ensure repo exists ────────────────────────────────────────────
