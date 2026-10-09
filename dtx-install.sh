@@ -2,11 +2,12 @@
 #
 # dtx-install.sh — one-shot worker bootstrap for Debian/Ubuntu hosts
 # Usage:  sudo bash dtx-install.sh              # local install (clone + deps + systemd)
-#         ./dtx-install.sh <remote_host>        # update remote worker git repo + restart svc
+#         ./dtx-install.sh --all                # deploy to all active hosts from workers.txt
 #         ./dtx-install.sh 10.0.79.8 10.0.79.20 # deploy to multiple hosts from thefarm
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${DXT_REPO_DIR:-/opt/dist-transcode}"
 REPO_URL="${DXT_REPO_URL:-https://github.com/austinleach-systems/dist-transcode.git}"
 REMOTE_USER="${DXT_REMOTE_USER:-austin}"
@@ -15,45 +16,37 @@ REMOTE_USER="${DXT_REMOTE_USER:-austin}"
 parse_workers() {
     local file="$1"
     grep -v '^#' "$file" | grep -v '^\s*$' | while IFS= read -r entry; do
-        echo "$entry" | grep -oP '^[^@]+@\K.+' || true  # extract host from user@host
+        echo "$entry" | sed -n 's/^[^@]*@//p' || true  # extract host from user@host
     done | sort -u
 }
 
 deploy_remote() {
     local target="$1"
-    # Handle both bare IPs and user@host format
     local hostname="${target#*@}"
-    local full_target="${target%%:*}"   # strip port if present
-    
+
     echo ""
-    echo "=== Updating worker on $hostname ==="
+    echo "=== Bootstrapping worker on $hostname ==="
     
-    # Use -t to allocate pty (lets sudo prompt interactively over SSH)
+    # Read this script, base64-encode it, pipe over SSH to decode and run as root.
+    # Remote script pulls latest code from git so the workers get current version.
+    local payload
+    payload="$(base64 -w0 "${SCRIPT_DIR}/dtx-install.sh")"
+    
     ssh -t -o StrictHostKeyChecking=no "$REMOTE_USER@$hostname" \
-        "set -euo pipefail; \
-         REPO_DIR='$REPO_DIR'; REPO_URL='$REPO_URL'; \
-         if [ ! -d \"\$REPO_DIR/.git\" ]; then \
-           echo '[*] Cloning repo...'; sudo git clone '\$REPO_URL' '\$REPO_DIR'; \
-         fi; \
-         echo '[*] Pulling latest...'; sudo git -C '\$REPO_DIR' pull; \
-         echo '[*] Restarting service...'; sudo systemctl restart dtx-worker.service" || {
-            echo "ERROR: update of $hostname failed."
+        "echo $payload | base64 -d | sudo bash < /dev/stdin" || {
+            echo "ERROR: bootstrap of $hostname failed."
             return 1
         }
-    
-    # Verify service is running
-    ssh -o StrictHostKeyChecking=no "$REMOTE_USER@$hostname" \
-        "sudo systemctl is-active dtx-worker.service" || true
 }
 
+# ── Parse remote args / --all ───────────────────────────────────────────
 if (( $# > 0 )); then
     workers=()
     for arg in "$@"; do
         if [[ "$arg" == "--all" ]]; then
-            # Read from workers.txt in this directory
-            local_wt="$(cd "$(dirname "${BASH_SOURCE[0]}")" && echo "workers.txt")"
+            local_wt="${SCRIPT_DIR}/workers.txt"
             if [[ ! -f "$local_wt" ]]; then
-                echo "ERROR: workers.txt not found in $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                echo "ERROR: workers.txt not found in ${SCRIPT_DIR}"
                 exit 1
             fi
             while IFS= read -r w; do
@@ -78,11 +71,11 @@ if (( $# > 0 )); then
     total=${#workers[@]}
     if (( failed > 0 )); then
         echo ""
-        echo "=== Updated $((total - failed))/$total host(s), $failed failed ==="
+        echo "=== Bootstrapped $((total - failed))/$total host(s), $failed failed ==="
         exit 1
     fi
     echo ""
-    echo "=== All $total host(s) updated successfully ==="
+    echo "=== All $total host(s) bootstrapped successfully ==="
     exit 0
 fi
 
@@ -101,6 +94,9 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     echo "ERROR: git clone from $REPO_URL failed."
     exit 1
   }
+else
+  echo "[+] Pulling latest..."
+  git -C "$REPO_DIR" pull
 fi
 
 if [ ! -f "$REPO_DIR/worker.py" ]; then
