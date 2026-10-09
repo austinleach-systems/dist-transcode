@@ -76,7 +76,7 @@ run() {
     scp "$fp" "$h:$REMOTE/$bn" 2>/dev/null || return 1
 
     local rc=1
-    rc=$($CL -r "$tmp_res.rc" --host "$hostip" transcode -f "$bn" 2>/dev/null; cat "$tmp_res.rc")
+    rc=$($CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" 2>/dev/null; cat "${tmp_res}.rc")
 
     if (( rc == 0 )); then
         local result="${stem}_av1.${ext}"

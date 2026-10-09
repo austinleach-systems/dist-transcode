@@ -14,8 +14,11 @@ Environment=W_REMOTE=/dev/shm/dist_transcode
 # Security hardening (optional - tighten as needed)
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/tmp
+ReadWritePaths=/tmp /dev/shm/dist_transcode
 PrivateTmp=no # We use /tmp paths for lock/prog files
+WorkingDirectory=/opt/dist-transcode
+User=root
+Group=root
 
 [Install]
 WantedBy=multi-user.target

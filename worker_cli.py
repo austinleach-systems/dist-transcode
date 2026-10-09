@@ -13,8 +13,9 @@ async def frame_protocol():
     reader, writer = await asyncio.open_connection(args.host, args.port)
 
     msg = {"action": args.cmd}
-    if args.file:
-        msg["filename"] = args.file
+    fn = getattr(args, "file", None)
+    if fn:
+        msg["filename"] = fn
 
     buf = json.dumps(msg).encode("utf-8")
     hdr = struct.pack(">I", len(buf))
@@ -68,5 +69,7 @@ if not args.cmd:
     p.print_help()
 else:
     if not args.result_file:
-        args.result_file = f"/tmp/.dtx_result_{os.getpid()}_{hash(args.host)}"
+        import hashlib
+        rid = hashlib.md5(args.host.encode()).hexdigest()[:8]
+        args.result_file = f"/tmp/.dtx_result_{os.getpid()}_{rid}"
     asyncio.run(frame_protocol())
