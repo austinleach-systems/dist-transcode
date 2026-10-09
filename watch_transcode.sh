@@ -84,7 +84,9 @@ run() {
 
     (( tried >= NWORK )) && return 1
 
-    local bn="${fp##*/}" sub stem ext
+    local bn="${fp##*/}" sub stem ext logfile
+    logfile="/tmp/.dtx_joblog_${RANDOM}_${RANDOM}"
+
     sub=$(dirname -- "$rp")
     [[ $sub == '.' ]] && sub=''
     stem=${bn%.*}
@@ -95,26 +97,43 @@ run() {
         sub=""
     fi
 
-    echo "[$(date +%H:%M)] $bn → $hostip ($h)"
-
-    # Upload via SCP (TCP doesn't replace bulk file transfer)
-    scp "$fp" "$h:$REMOTE/$bn" 2>/dev/null || return 1
+    local result="${stem}_av1.${ext}"
+    
+    # Upload, dispatch, wait for completion, collect output — all in one go
+    scp -q "$fp" "$h:$REMOTE/$bn" { echo "scp ok"; } >> "$logfile" 2>/dev/null \
+        || { echo "FAIL: scp failed" > "$logfile"; return 1; }
 
     local rc=0
     rc=$($CL -r "$tmp_res" --host "$hostip" transcode -f "$bn" 2>/dev/null; cat "${tmp_res}.rc")
+    true > "$tmp_res.rc.bak"  # clear for next read
+    echo "rc=${rc:-1}" >> "$logfile"
 
-    if (( rc == 0 )); then
-        local result="${stem}_av1.${ext}"
+    if (( ${rc:-1} == 0 )); then
         mkdir -p "$OUTPUT/$sub"
-        scp "$h:$REMOTE/$result" "$OUTPUT/$sub/" 2>/dev/null && echo " ok: $fp ($h)" \
-            || { echo " ?? failed to copy $result" >&2; false; }
+        if scp -q "$h:$REMOTE/$result" "$OUTPUT/$sub/" 2>/dev/null; then
+            echo " ok: $bn → $hostip" >> "$logfile"
+        else
+            echo " ?? copy failed: $result from $hostip" >> "$logfile"
+        fi
     else
-        echo " FAIL: exit=$rc on $hostip" >&2
+        echo " FAIL (rc=${rc}): $bn on $hostip" >> "$logfile"
     fi
 
     # Cleanup worker side
-    ssh "$h" "rm -f '${REMOTE}/${bn}' '${REMOTE}/${stem}_av1.*'" 2>/dev/null || true
+    ssh -q "$h" "rm -f '${REMOTE}/${bn}' '${REMOTE}/${stem}_av1.*'" 2>/dev/null || true
     rm -f "$tmp_res.rc"
+}
+
+# ── harvest log files and print them ────
+harvest_logs() {
+    local found=0
+    for lf in /tmp/.dtx_joblog_*; do
+        [[ -f "$lf" ]] || continue
+        found=1
+        cat "$lf"
+        rm -f "$lf"
+    done
+    (( found == 0 )) && return
 }
 
 # ── bootstrap scan (existing unencoded files) ────────
