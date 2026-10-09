@@ -7,7 +7,7 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-${HOME}}")" && pwd)"
 REPO_DIR="${DXT_REPO_DIR:-/opt/dist-transcode}"
 REPO_URL="${DXT_REPO_URL:-https://github.com/austinleach-systems/dist-transcode.git}"
 REMOTE_USER="${DXT_REMOTE_USER:-austin}"
