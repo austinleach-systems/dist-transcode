@@ -89,23 +89,20 @@ echo "=== Dist Transcode Worker Setup (local) ==="
 
 # ── Clone/ensure repo exists ────────────────────────────────────────────
 if [ ! -d "$REPO_DIR/.git" ]; then
-  if [ -f "$REPO_DIR/worker.py" ] || [ -d "$REPO_DIR" ]; then
-    # Dir has files from a prior run — init git so we can pull
-    echo "[*] Initializing git repo..."
-    git -C "$REPO_DIR" init && \
-      git -C "$REPO_DIR" remote add origin "$REPO_URL" 2>/dev/null || true
-  else
-    echo "[*] Cloning dist-transcode..."
-    git clone "$REPO_URL" "$REPO_DIR" || {
-      echo "ERROR: git clone from $REPO_URL failed."
-      exit 1
-    }
+  if [ -d "$REPO_DIR" ] && [ "$(ls -A "$REPO_DIR")" ]; then
+    # Stale dir (no .git, has old files) — wipe and start clean
+    echo "[*] Replacing stale directory..."
+    rm -rf "$REPO_DIR"
   fi
+  echo "[*] Cloning dist-transcode..."
+  git clone "$REPO_URL" "$REPO_DIR" || {
+    echo "ERROR: git clone from $REPO_URL failed."
+    exit 1
+  }
 fi
 
 echo "[+] Pulling latest..."
-git -C "$REPO_DIR" pull --allow-unrelated-histories || \
-  (git -C "$REPO_DIR" fetch origin && git -C "$REPO_DIR" checkout -B main origin/main && git -C "$REPO_DIR" reset --hard HEAD)
+git -C "$REPO_DIR" pull
 
 if [ ! -f "$REPO_DIR/worker.py" ]; then
   echo "ERROR: $REPO_DIR/worker.py missing after clone."
