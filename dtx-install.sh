@@ -101,8 +101,10 @@ if [ ! -d "$REPO_DIR/.git" ]; then
   }
 fi
 
-echo "[+] Pulling latest..."
-git -C "$REPO_DIR" pull
+echo "[+] Fetching latest..."
+git -C "$REPO_DIR" fetch origin || { git -C "$REPO_DIR" remote add origin "$REPO_URL"; git -C "$REPO_DIR" fetch origin; }
+git -C "$REPO_DIR" checkout -B main origin/main 2>/dev/null || true
+git -C "$REPO_DIR" reset --hard HEAD
 
 if [ ! -f "$REPO_DIR/worker.py" ]; then
   echo "ERROR: $REPO_DIR/worker.py missing after clone."
