@@ -97,6 +97,19 @@ async def run_encode(writer, filename):
             os.path.getsize(o) > 0 for o in outputs
         )
         ok = (rc == 0) or has_output
+
+        # Clean up failed job artifacts from RAM disk
+        if not ok:
+            import shutil
+            for p in glob.glob(f"{REMOTE_TMPDIR}/{stem}.*"):
+                try:
+                    if os.path.isdir(p):
+                        shutil.rmtree(p)
+                    else:
+                        os.remove(p)
+                except FileNotFoundError:
+                    pass
+
         return ok, rc
 
     except FileNotFoundError:
