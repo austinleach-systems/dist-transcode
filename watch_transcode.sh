@@ -99,10 +99,13 @@ run() {
 
     local result="${stem}_av1.${ext}"
     
-    # Upload via rsync (retry, compress, preserve attrs)
-    rsync -q --progress=no "$fp" "$h:$REMOTE/" 2>/dev/null >&- \
+       # Upload via rsync (retry, compress, preserve attrs)
+    # Debug log for failed uploads
+    local rsync_log="/tmp/.dtx_rsync_debug_${BASHPID}.log"
+    rsync -q --progress=no "$fp" "$h:$REMOTE/" 2>"$rsync_log" >&- \
         && echo " ok: uploaded $bn → $hostip" >> "$logfile" \
-        || { echo "FAIL: upload failed ($bn)" > "$logfile"; return 1; }
+        || { echo "FAIL: upload failed ($bn)" > "$logfile"; cat "$rsync_log" >> "$logfile"; return 1; }
+    rm -f "$rsync_log"
 
     local rc=0
     # --silent suppresses non-progress output; .rc gets just the number
