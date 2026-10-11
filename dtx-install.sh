@@ -131,6 +131,7 @@ fi
 
 # ── Prepare runtime dirs ───────────────────────────────────────────────
 mkdir -p /dev/shm/dist_transcode
+chown "$REMOTE_USER":"${REMOTE_USER}" /dev/shm/dist_transcode || true
 
 # ── Install systemd unit ───────────────────────────────────────────────
 cat > /etc/systemd/system/dtx-worker.service <<'EOF'
