@@ -1,3 +1,5 @@
 /transcode.joblog
 /workers.txt
 __pycache__/
+*.bak
+*.bak
